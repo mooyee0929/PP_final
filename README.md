@@ -3,7 +3,7 @@
 
 ## cmd for execution
 ```
-./main -f inputs/map_3.txt -n 4 -r 0 -d 5
+./main -f inputs/map_1.txt -n 4 -r 0 -d 5
 ```
 -f for input file
 -n for thread_num
