@@ -9,6 +9,8 @@
 #include <algorithm>    // std::m
 #include <chrono>
 #include <omp.h>
+#include <map>
+#include <string>
 using namespace std::chrono;
 
 point_t start, goal;
@@ -16,6 +18,15 @@ int max_num_of_nodes, num_of_obstacles;
 int map_dim_x, map_dim_y;
 int dist_to_grow;
 node_t final_winning_node;
+
+std::map<int, std::string> step = {
+    {0, "generate random point"},
+    {1, "find nearest node"},
+    {2, "grow from node"},
+    {3, "check collid"},
+    {4, "RRT*"},
+    {5, "check arrive goal"}
+};
 
 //copied from assignment 3
 static int _argc;
@@ -73,52 +84,57 @@ point_t generateRandomPoint(int map_dim_x, int map_dim_y){
 }
 
 inline bool LineIntersectsLine(node_t l1p1, node_t l1p2, node_t l2p1, node_t l2p2)
-    {
-        float q = (l1p1.point.y - l2p1.point.y) * (l2p2.point.x - l2p1.point.x) - (l1p1.point.x - l2p1.point.x) * (l2p2.point.y - l2p1.point.y);
-        float d = (l1p2.point.x - l1p1.point.x) * (l2p2.point.y - l2p1.point.y) - (l1p2.point.y - l1p1.point.y) * (l2p2.point.x - l2p1.point.x);
+{
+        float a = (l2p2.point.x - l2p1.point.x) * (l1p1.point.y - l2p1.point.y) - (l2p2.point.y - l2p1.point.y) * (l1p1.point.x - l2p1.point.x);
+        float b = (l1p2.point.x - l1p1.point.x) * (l1p1.point.y - l2p1.point.y) - (l1p2.point.y - l1p1.point.y) * (l1p1.point.x - l2p1.point.x);
+        float d = (l2p2.point.y - l2p1.point.y) * (l1p2.point.x - l1p1.point.x) - (l2p2.point.x - l2p1.point.x) * (l1p2.point.y - l1p1.point.y);
 
-        if( d == 0 )
+        if( d == 0 &&(a==0 || b==0))
         {
             return false;
         }
 
-        float r = q / d;
+        float ua = a/d;
+        float ub = b/d;
 
-        q = (l1p1.point.y - l2p1.point.y) * (l1p2.point.x - l1p1.point.x) - (l1p1.point.x - l2p1.point.x) * (l1p2.point.y - l1p1.point.y);
-        float s = q / d;
-
-        if( r < 0 || r > 1 || s < 0 || s > 1 )
+        if( (ua>=0 && ua<=1) && (ub>=0 && ub<=1))
         {
-            return false;
+            return true;
         }
 
-        return true;
-    }
+        return false;
+}
+
 // Collision checker based off of by: https://stackoverflow.com/questions/5514366/how-to-know-if-a-line-intersects-a-rectangle
 inline bool doesOverlapCollide(rect_t *obstacles, int num_of_obstacles, node_t nearnode, node_t newnode){
+    int padding = 1;
     for(int i = 0; i < num_of_obstacles; i++){
         rect_t o = obstacles[i];
         // two node on the same side
-        if(newnode.point.x < o.x1 && nearnode.point.x < o.x1  ||
-            newnode.point.x > o.x2 && nearnode.point.x > o.x2  ||
-            newnode.point.y < o.y1 && nearnode.point.y < o.y1  ||
-            newnode.point.y > o.y2 && nearnode.point.y > o.y2){
-            continue;;
+        int x1_pad = o.x1-padding;
+        int x2_pad = o.x2+padding;
+        int y1_pad = o.y1-padding;
+        int y2_pad = o.y2+padding;
+        if(newnode.point.x < x1_pad && nearnode.point.x < x1_pad  ||
+            newnode.point.x > x2_pad && nearnode.point.x > x2_pad  ||
+            newnode.point.y < y1_pad && nearnode.point.y < y1_pad  ||
+            newnode.point.y > y2_pad && nearnode.point.y > y2_pad){
+            continue;
         }
         //one node in the rec
-        if(newnode.point.x >= o.x1 && newnode.point.x <= o.x2  && newnode.point.y >= o.y1 && newnode.point.y <= o.y2 ||
-            newnode.point.x >= o.x1 && newnode.point.x <= o.x2  && newnode.point.y >= o.y1 && newnode.point.y <= o.y2){
+        if(newnode.point.x >= x1_pad && newnode.point.x <= x2_pad  && newnode.point.y >= y1_pad && newnode.point.y <= y2_pad ||
+            newnode.point.x >= x1_pad && newnode.point.x <= x2_pad  && newnode.point.y >= y1_pad && newnode.point.y <= y2_pad){
             return true;
         }
         node_t node0,node1,node2,node3;
-        node0.point.x = o.x1;
-        node0.point.y = o.y1;
-        node1.point.x = o.x1;
-        node1.point.y = o.y2;
-        node2.point.x = o.x2;
-        node2.point.y = o.y1;
-        node3.point.x = o.x2;
-        node3.point.y = o.y2;
+        node0.point.x = x1_pad;
+        node0.point.y = y1_pad;
+        node1.point.x = x1_pad;
+        node1.point.y = y2_pad;
+        node2.point.x = x2_pad;
+        node2.point.y = y1_pad;
+        node3.point.x = x2_pad;
+        node3.point.y = y2_pad;
 
         if(LineIntersectsLine(nearnode, newnode, node0,node1) ||
                LineIntersectsLine(nearnode, newnode, node0,node2) ||
@@ -130,55 +146,6 @@ inline bool doesOverlapCollide(rect_t *obstacles, int num_of_obstacles, node_t n
     return false;
 }
 
-
-// // returns true if it does collide (overlap)
-// inline bool doesOverlapCollide(rect_t *obstacles, int num_of_obstacles, node_t node1, node_t node2){
-//     // check if node1 to node2 overlaps with any of the obstales
-//     for(int i = 0; i < num_of_obstacles; i++){
-//         int padding = 3;
-//         int x1_boundry = obstacles[i].x1 + padding;
-//         int x2_boundry = obstacles[i].x2 + padding;
-//         int y1_boundry = obstacles[i].y1 - padding;
-//         int y2_boundry = obstacles[i].y2 + padding;
-
-//         assert(x1_boundry <= x2_boundry);
-//         assert(y1_boundry <= y2_boundry);
-
-//         int node_1_x = node1.point.x;
-//         int node_1_y = node1.point.y;
-//         int node_2_x = node2.point.x;
-//         int node_2_y = node2.point.y;
-
-//         // return false if node1 and node2 x and y are not in the same boundry
-//         if((node_1_x < x1_boundry && node_2_x < x1_boundry) || (node_1_x > x2_boundry && node_2_x > x2_boundry) ||
-//            (node_1_y < y1_boundry && node_2_y < y1_boundry) || (node_1_y > y2_boundry && node_2_y > y2_boundry)){
-//             continue;
-//         }
-
-//         // calculate the y and x of the intersection
-//         float slope = ((float)(node_2_y - node_1_y)) / ((float)(node_2_x - node_1_x));
-//         float node_y_at_x1 = node_1_y + (x1_boundry - node_1_x) * slope; // y offset + slope * (x offset) 
-//         float node_y_at_x2 = node_1_y + (x2_boundry - node_1_x) * slope;
-        
-//         if ((node_y_at_x1 < std::min(y1_boundry, y2_boundry) || node_y_at_x1 > std::max(y2_boundry, y1_boundry)) &&
-//             (node_y_at_x2 < std::min(y1_boundry, y2_boundry) || node_y_at_x2 > std::min(y1_boundry, y2_boundry)))
-//             continue;
-
-//         float node_x_at_y1 = node_1_x + (y1_boundry - node_1_y) / slope;
-//         float node_x_at_y2 = node_1_x + (y2_boundry - node_1_y) / slope;
-
-//         if ((node_x_at_y1 < std::min(x1_boundry, x2_boundry) || node_x_at_y1 > std::max(x2_boundry, x1_boundry)) &&
-//             (node_x_at_y2 < std::min(x1_boundry, x2_boundry) || node_x_at_y2 > std::min(x1_boundry, x2_boundry)))
-//             continue;
-
-        
-//         // one of the prior conditions failed
-//         return true;
-//     }
-
-//     return false;
-
-// }
 
 bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int num_of_nodes, node_t **nearest_node){
     // Find the nearest node to the coordinate.
@@ -392,6 +359,14 @@ int main(int argc, const char *argv[]) {
         // .child = NULL
     };
 
+    node_t nodegoal;
+    nodegoal = (node_t) {
+        .point = goal,
+        .cost = 0,
+        .parent = NULL
+        // .child = NULL
+    };
+
     // random seed based on current time
     // srand (time(NULL));
     srand(0); // TODO: REVERT THIS OR ELSE RANDOMNESS IS NOT RANDOM
@@ -496,7 +471,7 @@ int main(int argc, const char *argv[]) {
     printf("\n number of winning nodes: %d \n\n", num_of_winning_nodes);
 
     for(int i = 0; i < 6; i++){
-        printf("%ld, ", timers[i]);
+        printf("%s time : %ld\n", step[i] ,timers[i]);
     }
 
     printf("\n\n");
@@ -554,6 +529,8 @@ int main(int argc, const char *argv[]) {
     fprintf(path_output_file, "%d\n", final_winning_node.cost);
 
     // traverse again to print
+    fprintf(path_output_file, "%d %d %d\n", nodegoal.point.x, nodegoal.point.y, 0);
+
     current_node = final_winning_node;
     int parent_index;
     while(current_node.point.x != start.x || current_node.point.y != start.y){
