@@ -35,12 +35,7 @@ int get_option_int(const char *option_name, int default_value) {
     return default_value;
 }
 
-float get_option_float(const char *option_name, float default_value) {
-    for (int i = _argc - 2; i >= 0; i -= 2)
-        if (strcmp(_argv[i], option_name) == 0)
-            return (float)atof(_argv[i + 1]);
-    return default_value;
-}
+
 
 static void show_help(const char *program_path) {
     printf("Usage: %s OPTIONS\n", program_path);
@@ -77,81 +72,60 @@ point_t generateRandomPoint(int map_dim_x, int map_dim_y){
     return point;
 }
 
-inline bool doesCollide(rect_t *obstacles, int num_of_obstacles, node_t node){
-    // check if vector collides with any of the obstales
+inline bool LineIntersectsLine(node_t l1p1, node_t l1p2, node_t l2p1, node_t l2p2)
+    {
+        float q = (l1p1.point.y - l2p1.point.y) * (l2p2.point.x - l2p1.point.x) - (l1p1.point.x - l2p1.point.x) * (l2p2.point.y - l2p1.point.y);
+        float d = (l1p2.point.x - l1p1.point.x) * (l2p2.point.y - l2p1.point.y) - (l1p2.point.y - l1p1.point.y) * (l2p2.point.x - l2p1.point.x);
+
+        if( d == 0 )
+        {
+            return false;
+        }
+
+        float r = q / d;
+
+        q = (l1p1.point.y - l2p1.point.y) * (l1p2.point.x - l1p1.point.x) - (l1p1.point.x - l2p1.point.x) * (l1p2.point.y - l1p1.point.y);
+        float s = q / d;
+
+        if( r < 0 || r > 1 || s < 0 || s > 1 )
+        {
+            return false;
+        }
+
+        return true;
+    }
+// Collision checker based off of by: https://stackoverflow.com/questions/5514366/how-to-know-if-a-line-intersects-a-rectangle
+inline bool doesOverlapCollide(rect_t *obstacles, int num_of_obstacles, node_t nearnode, node_t newnode){
     for(int i = 0; i < num_of_obstacles; i++){
         rect_t o = obstacles[i];
-        int padding = 3;
-        if(node.point.x >= o.x1 - padding && node.point.x <= o.x2 + padding &&
-            node.point.y >= o.y1 - padding && node.point.y <= o.y2 + padding){
+        // two node on the same side
+        if(newnode.point.x < o.x1 && nearnode.point.x < o.x1  ||
+            newnode.point.x > o.x2 && nearnode.point.x > o.x2  ||
+            newnode.point.y < o.y1 && nearnode.point.y < o.y1  ||
+            newnode.point.y > o.y2 && nearnode.point.y > o.y2){
+            continue;;
+        }
+        //one node in the rec
+        if(newnode.point.x >= o.x1 && newnode.point.x <= o.x2  && newnode.point.y >= o.y1 && newnode.point.y <= o.y2 ||
+            newnode.point.x >= o.x1 && newnode.point.x <= o.x2  && newnode.point.y >= o.y1 && newnode.point.y <= o.y2){
             return true;
         }
-    }
-    return false;
-}
+        node_t node0,node1,node2,node3;
+        node0.point.x = o.x1;
+        node0.point.y = o.y1;
+        node1.point.x = o.x1;
+        node1.point.y = o.y2;
+        node2.point.x = o.x2;
+        node2.point.y = o.y1;
+        node3.point.x = o.x2;
+        node3.point.y = o.y2;
 
-// Collision checker based off of by: https://stackoverflow.com/questions/5514366/how-to-know-if-a-line-intersects-a-rectangle
-inline bool doesOverlapCollide(rect_t *obstacles, int num_of_obstacles, node_t node1, node_t node2){
-    for(int i = 0; i < num_of_obstacles; i++){
-        int x1_boundry = obstacles[i].x1;
-        int x2_boundry = obstacles[i].x2;
-        int y1_boundry = obstacles[i].y1;
-        int y2_boundry = obstacles[i].y2;
-
-        int padding = 5;
-        double rectangleMinX = std::min(x1_boundry, x2_boundry) - padding;
-        double rectangleMinY = std::min(y1_boundry, y2_boundry) - padding;
-        double rectangleMaxX = std::max(x1_boundry, x2_boundry) + padding;
-        double rectangleMaxY = std::max(y1_boundry, y2_boundry) + padding;
-
-        int p1X = node1.point.x;
-        int p1Y = node1.point.y;
-        int p2X = node2.point.x;
-        int p2Y = node2.point.y;
-        // Find min and max X for the segment
-        double minX = (std::min(p1X, p2X));
-        double maxX = (std::max(p1X, p2X));       
-
-        // Find the intersection of the segment's and rectangle's x-projections
-        maxX = maxX > rectangleMaxX ? rectangleMaxX : maxX;
-        minX = minX < rectangleMinX ? rectangleMinX : minX;
-
-        if (minX > maxX) // Projections don't intersect
-        {
-            continue;
+        if(LineIntersectsLine(nearnode, newnode, node0,node1) ||
+               LineIntersectsLine(nearnode, newnode, node0,node2) ||
+               LineIntersectsLine(nearnode, newnode, node1,node3) ||
+               LineIntersectsLine(nearnode, newnode, node2,node3)){
+            return true;
         }
-
-        // Find corresponding min and max Y for min and max X we found before
-        double minY = p1Y;
-        double maxY = p2Y;
-
-        double dx = p2X - p1X;
-
-        if (dx != 0) // avoid div0 errors
-        {
-            double a = (p2Y - p1Y)/dx;
-            double b = p1Y - a*p1X;
-            minY = a*minX + b;
-            maxY = a*maxX + b;
-        }
-
-        if (minY > maxY)
-        {
-            double tmp = maxY;
-            maxY = minY;
-            minY = tmp;
-        }
-
-        // Find the intersection of the segment's and rectangle's y-projections
-        maxY = maxY > rectangleMaxY ? rectangleMaxY : maxY;
-        minY = minY < rectangleMinY ? rectangleMinY : minY;
-
-        if (minY > maxY) // projections don't intersect
-        {
-            continue;
-        }
-
-        return true; // a prior failed
     }
     return false;
 }
@@ -474,7 +448,7 @@ int main(int argc, const char *argv[]) {
                 continue;
             }
         // check if node is valid
-        } while(doesCollide(obstacles, num_of_obstacles, candidate_node));
+        } while(doesOverlapCollide(obstacles, num_of_obstacles, *nearest_vertex, candidate_node));
 
 
         auto end_4 = high_resolution_clock::now();
