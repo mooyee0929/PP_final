@@ -11,7 +11,10 @@
 #include <omp.h>
 #include <map>
 #include <string>
+#include <iostream>
 using namespace std::chrono;
+
+// #define openMP 1
 
 point_t start, goal;
 int max_num_of_nodes, num_of_obstacles;
@@ -25,7 +28,7 @@ std::map<int, std::string> step = {
     {2, "grow from node"},
     {3, "check collid"},
     {4, "RRT*"},
-    {5, "check arrive goal"}
+    {5, "check arrive goal"},
 };
 
 //copied from assignment 3
@@ -161,8 +164,9 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
         min_d2_array[i] = min_d2;
         min_d2_index_array[i] = -1;
     }
-    
+    #ifdef openMP
     #pragma omp parallel for
+    #endif
     for(int i = 0; i < num_of_nodes; i++) {
         int d2 = squaredDistance(coordinate, list_of_nodes[i].point);
         int tid = omp_get_thread_num();
@@ -203,10 +207,13 @@ inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_
     uint32_t min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greater than any distance
     node_t nearest_node;
     int best_index = -1;
-    
+    #ifdef openMP
     #pragma omp parallel
+    #endif
     {
+        #ifdef openMP
         #pragma omp for schedule(static, 32)
+        #endif
         for(int i = 0; i < num_of_nodes_to_search; i++) {
             // int num_of_threads = omp_get_num_threads();
             // printf("num_of_threads: %d\n", num_of_threads);
@@ -235,8 +242,9 @@ inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_
             node_to_refine->cost = cost_with_candidate;
                         
             // now that the best node is found, find other nodes that can benifit from this
-            
+            #ifdef openMP
             #pragma omp for schedule(static, 32)
+            #endif
             for(int i = 0; i < num_of_nodes_to_search; i++) {
                 node_t *candidate_node = list_of_nodes + i;
                 int d2 = euclideanDistance(node_to_refine->point, candidate_node->point);
@@ -471,7 +479,7 @@ int main(int argc, const char *argv[]) {
     printf("\n number of winning nodes: %d \n\n", num_of_winning_nodes);
 
     for(int i = 0; i < 6; i++){
-        printf("%s time : %ld\n", step[i] ,timers[i]);
+        printf("%s time : %ld\n", step[i].c_str() ,timers[i]);
     }
 
     printf("\n\n");
