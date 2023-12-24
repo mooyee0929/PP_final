@@ -6,12 +6,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include <algorithm>    // std::m
+#include <algorithm>    
 #include <chrono>
 #include <omp.h>
+#include <pthread.h>
 #include <map>
 #include <string>
-#include <iostream>
 using namespace std::chrono;
 
 // #define openMP 1
@@ -20,6 +20,8 @@ point_t start, goal;
 int max_num_of_nodes, num_of_obstacles;
 int map_dim_x, map_dim_y;
 int dist_to_grow;
+int num_of_threads,nthreads;
+int rounds=0;
 node_t final_winning_node;
 
 std::map<int, std::string> step = {
@@ -63,8 +65,11 @@ static void show_help(const char *program_path) {
 
 
 bool growFromNode(node_t *node, point_t direction, int dist_to_grow, node_t *new_node_return) {
+
     int x_dist = direction.x - node->point.x;
+    
     int y_dist = direction.y - node->point.y;
+
     float dist = euclideanDistance(node->point, direction);
     float dist_ratio = dist_to_grow / dist;
 
@@ -77,6 +82,7 @@ bool growFromNode(node_t *node, point_t direction, int dist_to_grow, node_t *new
         return false;
     *new_node_return = new_node;
     return true;
+    
 }
 
 point_t generateRandomPoint(int map_dim_x, int map_dim_y){
@@ -149,6 +155,26 @@ inline bool doesOverlapCollide(rect_t *obstacles, int num_of_obstacles, node_t n
     return false;
 }
 
+void *findnearthread(void *arg){
+    threadstrcut0 *args = (threadstrcut0 *)arg;
+    point_t coordinate = args->coordinate;
+    node_t *list_of_nodes = args->list_of_nodes;
+    int points_per_thread = args->points_per_thread;
+    int offset = args->offset;
+    int *min_d2_array = args->min_d2_array;
+    int *min_d2_index_array = args->min_d2_index_array;
+    for(int i = offset*points_per_thread;i<(offset+1)*points_per_thread;i++){
+        int d2 = squaredDistance(coordinate, list_of_nodes[i].point);
+        int tid = offset;
+        // printf("Thread %d: d2 = %d\n", tid, d2);
+        if(d2 < min_d2_array[tid]){
+            min_d2_array[tid] = d2;
+            min_d2_index_array[tid] = i;
+        }
+    }
+    
+    return NULL;
+}
 
 bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int num_of_nodes, node_t **nearest_node){
     // Find the nearest node to the coordinate.
@@ -156,7 +182,12 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
     // returns false if nearest node is closer than dist_to_grow     
     int min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greater than any distance
     
-    int core_count = omp_get_max_threads();
+    if (rounds<nthreads){
+        num_of_threads = 1;
+    }else{
+        num_of_threads = nthreads;
+    }
+    int core_count = num_of_threads;
     int min_d2_array[core_count];
     int min_d2_index_array[core_count];
 
@@ -164,34 +195,44 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
         min_d2_array[i] = min_d2;
         min_d2_index_array[i] = -1;
     }
-    #ifdef openMP
-    #pragma omp parallel for
-    #endif
-    for(int i = 0; i < num_of_nodes; i++) {
-        int d2 = squaredDistance(coordinate, list_of_nodes[i].point);
-        int tid = omp_get_thread_num();
-        // printf("Thread %d: d2 = %d\n", tid, d2);
-        if(d2 < min_d2_array[tid]){
-            min_d2_array[tid] = d2;
-            min_d2_index_array[tid] = i;
-        }
+
+    pthread_t threads[num_of_threads];
+    threadstrcut0 args[num_of_threads];
+    int points_per_thread = num_of_nodes/num_of_threads;
+    for(int i = 0; i < num_of_threads; i++) {
+        args[i].coordinate = coordinate;
+        args[i].list_of_nodes = list_of_nodes;
+        args[i].points_per_thread = points_per_thread;
+        args[i].offset = i;
+        args[i].min_d2_array = min_d2_array;
+        args[i].min_d2_index_array = min_d2_index_array;
+    }
+    for(int i = 0; i < num_of_threads; i++) {
+        pthread_create(&threads[i], NULL, findnearthread, &args[i]);
     }
 
-    int min_index; 
+    void *status;
+    for(int i = 0; i < num_of_threads; i++) {
+        pthread_join(threads[i], &status);
+    }
+
+    int min_index,min_i; 
     // int min_i;
     for(int i = 0; i < core_count; i++){
         if(min_d2_array[i] < min_d2){
             min_d2 = min_d2_array[i];
             min_index = min_d2_index_array[i];
-            // min_i = i;
+            min_i = i;
         }
+        // printf("min cost %d, min thread %d,min index %d, now %d, now cost %d\n",min_d2,min_i,min_index, i,min_d2_array[i]);
     }
 
     // printf("min_index: %d\n", min_index);
     // printf("min_index2 : %d\n", min_i);
 
     *nearest_node = &list_of_nodes[min_index];
-
+    // printf("x : %d, y : %d, parent : %d\n",(*nearest_node)->point.x,(*nearest_node)->point.y,(*nearest_node)->parent);
+    
     if(min_d2 < dist_to_grow){
         return false;
     }
@@ -204,7 +245,7 @@ inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_
     // Find the nearest node to the coordinate and sets it as its parent.
 
     int threshold_d2 = dist_to_grow * 2; // just a heuristic, TODO: refine later 
-    uint32_t min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greater than any distance
+    uint32_t min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greaterthreshold_d2 than any distance
     node_t nearest_node;
     int best_index = -1;
     #ifdef openMP
@@ -300,13 +341,13 @@ int main(int argc, const char *argv[]) {
     _argv = argv + 1;
 
     const char *input_filename = get_option_string("-f", NULL);
-    int num_of_threads = get_option_int("-n", 1);
+    num_of_threads = get_option_int("-n", 1);
     int rrt_star_flag = get_option_int("-r", 0);
     dist_to_grow = get_option_int("-d", 5);
     
-    omp_set_num_threads(num_of_threads);
+    
 
-    int nthreads = omp_get_num_threads();
+    nthreads = num_of_threads;
     printf("Number of threads = %d\n", nthreads);
 
     if (input_filename == NULL) {
@@ -408,7 +449,8 @@ int main(int argc, const char *argv[]) {
 
             // timing code
             end_1 = high_resolution_clock::now();
-
+            rounds  = num_nodes_generated;
+            // printf("rounds %d\n",num_nodes_generated);
             // find the nearest vertex
             bool res = findNearestNodeToCoordinate(random_point, list_of_nodes, num_nodes_generated, &nearest_vertex);
             if (!res) {
@@ -421,7 +463,6 @@ int main(int argc, const char *argv[]) {
             
             // generate a new node by growing from the nearest vertex
             res = growFromNode(nearest_vertex, random_point, dist_to_grow, &candidate_node);
-
             // timing code
             end_3 = high_resolution_clock::now();
 
@@ -476,10 +517,10 @@ int main(int argc, const char *argv[]) {
     }
     auto end_time = std::chrono::high_resolution_clock::now();
 
-    printf("\n number of winning nodes: %d \n\n", num_of_winning_nodes);
+    printf("\nnumber of winning nodes: %d \n\n", num_of_winning_nodes);
 
     for(int i = 0; i < 6; i++){
-        printf("%s time : %ld\n", step[i].c_str() ,timers[i]);
+        printf("%s time : %d\n", step[i].c_str() ,timers[i]);
     }
 
     printf("\n\n");

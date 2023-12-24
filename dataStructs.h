@@ -21,4 +21,15 @@ typedef struct node{
     struct node *parent;
 } node_t;
 
+typedef struct findnearthread
+{
+    point_t coordinate;
+    node_t *list_of_nodes;
+    int points_per_thread;
+    int offset;
+    int *min_d2_array;
+    int *min_d2_index_array;
+}threadstrcut0;
+
+
 #endif

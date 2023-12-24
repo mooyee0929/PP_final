@@ -1,4 +1,4 @@
-APP_NAME=main
+APP_NAME=master
 
 OBJS=main.o
 
