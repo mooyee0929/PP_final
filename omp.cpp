@@ -259,7 +259,7 @@ inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_
                         candidate_node->cost = cost_with_optimized_node;
                     }
                 }
-            }   
+            }
         }
     }
 

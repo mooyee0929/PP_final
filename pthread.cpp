@@ -8,7 +8,6 @@
 #include <assert.h>
 #include <algorithm>    
 #include <chrono>
-#include <omp.h>
 #include <pthread.h>
 #include <map>
 #include <string>
@@ -21,7 +20,7 @@ int max_num_of_nodes, num_of_obstacles;
 int map_dim_x, map_dim_y;
 int dist_to_grow;
 int num_of_threads,nthreads;
-int rounds=0;
+
 node_t final_winning_node;
 
 std::map<int, std::string> step = {
@@ -182,22 +181,22 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
     // returns false if nearest node is closer than dist_to_grow     
     int min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greater than any distance
     
-    if (rounds<nthreads){
-        num_of_threads = rounds;
+    if (num_of_nodes<num_of_threads){
+        nthreads = num_of_nodes;
     }else{
-        num_of_threads = nthreads;
+        nthreads = num_of_threads;
     }
-    int core_count = num_of_threads;
-    int min_d2_array[core_count];
-    int min_d2_index_array[core_count];
 
-    for(int i = 0; i < core_count; i++){
+    int min_d2_array[nthreads];
+    int min_d2_index_array[nthreads];
+
+    for(int i = 0; i < nthreads; i++){
         min_d2_array[i] = min_d2;
         min_d2_index_array[i] = -1;
     }
 
-    int points_per_thread = num_of_nodes/num_of_threads;
-    for(int i = 0; i < num_of_threads; i++) {
+    int points_per_thread = num_of_nodes/nthreads;
+    for(int i = 0; i < nthreads; i++) {
         args[i].coordinate = coordinate;
         args[i].list_of_nodes = list_of_nodes;
         args[i].points_per_thread = points_per_thread;
@@ -205,22 +204,22 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
         args[i].min_d2_array = min_d2_array;
         args[i].min_d2_index_array = min_d2_index_array;
     }
-    for(int i = 0; i < num_of_threads; i++) {
+    for(int i = 0; i < nthreads; i++) {
         pthread_create(&threads[i], NULL, findnearthread, &args[i]);
     }
 
     void *status;
-    for(int i = 0; i < num_of_threads; i++) {
+    for(int i = 0; i < nthreads; i++) {
         pthread_join(threads[i], &status);
     }
 
-    int min_index,min_i; 
+    int min_index; 
     // int min_i;
-    for(int i = 0; i < core_count; i++){
+    for(int i = 0; i < nthreads; i++){
         if(min_d2_array[i] < min_d2){
             min_d2 = min_d2_array[i];
             min_index = min_d2_index_array[i];
-            min_i = i;
+            // min_i = i;
         }
         // printf("min cost %d, min thread %d,min index %d, now %d, now cost %d\n",min_d2,min_i,min_index, i,min_d2_array[i]);
     }
@@ -238,70 +237,146 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
     return true;
 }
 
-inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_of_nodes_to_search, rect_t *obstacles, int num_of_obstacles){
-    static int nodes_improved = 0;
-    // Find the nearest node to the coordinate and sets it as its parent.
-
+void *find_min_cost(void * arg){
+    threadstrcut1 *args = (threadstrcut1 *)arg;
+    node_t *node_to_refine = args->node_to_refine;
+    node_t *list_of_nodes = args->list_of_nodes;
+    rect_t *obstacles = args->obstacles;
+    int points_per_thread = args->points_per_thread;
+    int offset = args->offset;
+    int *min_d2_index_array = args->min_d2_index_array;
+    int *min_d2_array = args->min_d2_array;
     int threshold_d2 = dist_to_grow * 2; // just a heuristic, TODO: refine later 
     uint32_t min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greaterthreshold_d2 than any distance
-    node_t nearest_node;
-    int best_index = -1;
-    #ifdef openMP
-    #pragma omp parallel
-    #endif
-    {
-        #ifdef openMP
-        #pragma omp for schedule(static, 32)
-        #endif
-        for(int i = 0; i < num_of_nodes_to_search; i++) {
-            // int num_of_threads = omp_get_num_threads();
-            // printf("num_of_threads: %d\n", num_of_threads);
+    
 
-            node_t candidate_node = list_of_nodes[i];
-            int d2 = euclideanDistance(node_to_refine->point, candidate_node.point);
-            // TODO: Might need to check collision here
-            if(d2 < threshold_d2 && d2 > 0){
-                bool collide = doesOverlapCollide(obstacles, num_of_obstacles, *node_to_refine, candidate_node);
-                if (collide)
-                    continue;
-                uint32_t cost_with_candidate = candidate_node.cost + d2;
-                // valid node, see if the cost is lower
-                if (cost_with_candidate < node_to_refine->cost && cost_with_candidate < min_d2) {
-                    nearest_node = candidate_node;
-                    min_d2 = cost_with_candidate;
-                    best_index = i;
-                }
+    for(int i = offset*points_per_thread;i<(offset+1)*points_per_thread;i++) {
+        // int num_of_threads = omp_get_num_threads();
+        // printf("num_of_threads: %d\n", num_of_threads);
+
+        node_t candidate_node = list_of_nodes[i];
+        int d2 = euclideanDistance(node_to_refine->point, candidate_node.point);
+        // TODO: Might need to check collision here
+        if(d2 < threshold_d2 && d2 > 0){
+            bool collide = doesOverlapCollide(obstacles, num_of_obstacles, *node_to_refine, candidate_node);
+            if (collide)
+                continue;
+            uint32_t cost_with_candidate = candidate_node.cost + d2;
+            // valid node, see if the cost is lower
+            if (cost_with_candidate < node_to_refine->cost && cost_with_candidate < min_d2) {
+                min_d2_index_array[offset] = i;
+                min_d2_array[offset] = cost_with_candidate;
             }
         }
+    }
+    return NULL;
+}
 
-        if(best_index != -1) {
+void *change_cost(void * arg){
+    threadstrcut2 *args = (threadstrcut2 *)arg;
+    node_t *node_to_refine = args->node_to_refine;
+    node_t *list_of_nodes = args->list_of_nodes;
+    rect_t *obstacles = args->obstacles;
+    int points_per_thread = args->points_per_thread;
+    int offset = args->offset;
+    int best_index = args->best_index;
+    int threshold_d2 = dist_to_grow * 2; // just a heuristic, TODO: refine later 
+    
+    
 
-            uint32_t cost_with_candidate = nearest_node.cost + euclideanDistance(node_to_refine->point, nearest_node.point);
-            node_to_refine->parent = list_of_nodes + best_index;
-            node_to_refine->cost = cost_with_candidate;
-                        
-            // now that the best node is found, find other nodes that can benifit from this
-            #ifdef openMP
-            #pragma omp for schedule(static, 32)
-            #endif
-            for(int i = 0; i < num_of_nodes_to_search; i++) {
-                node_t *candidate_node = list_of_nodes + i;
-                int d2 = euclideanDistance(node_to_refine->point, candidate_node->point);
-                // TODO: Might need to check collision here
-                bool collide = doesOverlapCollide(obstacles, num_of_obstacles, *node_to_refine, *candidate_node);
-                if (collide)
-                    continue;
-                if(d2 < threshold_d2 && d2 > 0){
-                    uint32_t cost_with_optimized_node = d2 + node_to_refine->cost;
-                    // valid node, see if the cost is lower
-                    if (cost_with_optimized_node < candidate_node->cost) {
-                        candidate_node->parent = list_of_nodes + best_index;
-                        candidate_node->cost = cost_with_optimized_node;
-                    }
-                }
-            }   
+    for(int i = offset*points_per_thread;i<(offset+1)*points_per_thread;i++) {
+
+        node_t *candidate_node = list_of_nodes + i;
+        int d2 = euclideanDistance(node_to_refine->point, candidate_node->point);
+        // TODO: Might need to check collision here
+        bool collide = doesOverlapCollide(obstacles, num_of_obstacles, *node_to_refine, *candidate_node);
+        if (collide)
+            continue;
+        if(d2 < threshold_d2 && d2 > 0){
+            uint32_t cost_with_optimized_node = d2 + node_to_refine->cost;
+            // valid node, see if the cost is lower
+            if (cost_with_optimized_node < candidate_node->cost) {
+                candidate_node->parent = list_of_nodes + best_index;
+                candidate_node->cost = cost_with_optimized_node;
+            }
         }
     }
+    return NULL;
+}
+
+inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_of_nodes_to_search, rect_t *obstacles, int num_of_obstacles, pthread_t *threads, threadstrcut1 *args, threadstrcut2 *argg){
+
+
+    uint32_t min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greaterthreshold_d2 than any distance
+
+    if (num_of_nodes_to_search<num_of_threads){
+        nthreads = num_of_nodes_to_search;
+    }else{
+        nthreads = num_of_threads;
+    }
+    int points_per_thread = num_of_nodes_to_search/nthreads;
+    int best_index = -1;
+    int min_d2_array[nthreads];
+    int min_d2_index_array[nthreads];
+
+    for(int i = 0; i < nthreads; i++){
+        min_d2_array[i] = min_d2;
+        min_d2_index_array[i] = -1;
+
+    }
+    for(int i = 0; i < nthreads; i++) {
+        args[i].node_to_refine = node_to_refine;
+        args[i].list_of_nodes = list_of_nodes;
+        args[i].obstacles = obstacles;
+        args[i].points_per_thread = points_per_thread;
+        args[i].offset = i;
+        args[i].min_d2_array = min_d2_array;
+        args[i].min_d2_index_array = min_d2_index_array;
+    }
+
+    for(int i = 0; i < nthreads; i++) {
+        pthread_create(&threads[i], NULL, find_min_cost, &args[i]);
+    }
+
+    void *status;
+    for(int i = 0; i < nthreads; i++) {
+        pthread_join(threads[i], &status);
+    }
+
+    for(int i = 0; i < nthreads; i++) {
+        if(min_d2_array[i] < min_d2){
+            min_d2 = min_d2_array[i];
+            best_index = min_d2_index_array[i];
+        }
+    }
+
+    
+
+
+    if(best_index != -1) {
+
+        for(int i = 0; i < nthreads; i++) {
+        argg[i].node_to_refine = node_to_refine;
+        argg[i].list_of_nodes = list_of_nodes;
+        argg[i].obstacles = obstacles;
+        argg[i].points_per_thread = points_per_thread;
+        argg[i].offset = i;
+        argg[i].best_index = best_index;
+        }
+
+        for(int i = 0; i < nthreads; i++) {
+            pthread_create(&threads[i], NULL, change_cost, &argg[i]);
+        }
+        
+        void *status;
+        for(int i = 0; i < nthreads; i++) {
+            pthread_join(threads[i], &status);
+        }        
+        // now that the best node is found, find other nodes that can benifit from this
+
+        
+    }
+    
 
     return;
 
@@ -346,7 +421,7 @@ int main(int argc, const char *argv[]) {
     
 
     nthreads = num_of_threads;
-    printf("Number of threads = %d\n", nthreads);
+
 
     if (input_filename == NULL) {
         printf("Error: You need to specify -f.\n");
@@ -418,7 +493,9 @@ int main(int argc, const char *argv[]) {
     // srand (time(NULL));
     srand(0); // TODO: REVERT THIS OR ELSE RANDOMNESS IS NOT RANDOM
     pthread_t threads[num_of_threads];
-    threadstrcut0 args[num_of_threads];
+    threadstrcut0 args0[num_of_threads];
+    threadstrcut1 args1[num_of_threads];
+    threadstrcut2 args2[num_of_threads];
 
     int num_nodes_generated = 0;
     uint32_t best_cost = 0;
@@ -444,14 +521,13 @@ int main(int argc, const char *argv[]) {
             start_1 = high_resolution_clock::now();
 
             random_point = generateRandomPoint(map_dim_x, map_dim_y);
-            // printf("Random point: (%d, %d)\n", random_point.x, random_point.y);
 
             // timing code
             end_1 = high_resolution_clock::now();
-            rounds  = num_nodes_generated;
-            // printf("rounds %d\n",num_nodes_generated);
+
+
             // find the nearest vertex
-            bool res = findNearestNodeToCoordinate(random_point, list_of_nodes, num_nodes_generated, &nearest_vertex,threads,args);
+            bool res = findNearestNodeToCoordinate(random_point, list_of_nodes, num_nodes_generated, &nearest_vertex,threads,args0);
             if (!res) {
                 // Closest node is too close...just skip this iteration
                 continue;
@@ -477,7 +553,7 @@ int main(int argc, const char *argv[]) {
         auto end_4 = high_resolution_clock::now();
         // run RRT* refinement
         if(rrt_star_flag){
-            run_rrt_star(&candidate_node, list_of_nodes, num_nodes_generated, obstacles, num_of_obstacles);
+            run_rrt_star(&candidate_node, list_of_nodes, num_nodes_generated, obstacles, num_of_obstacles,threads,args1,args2);
         }
         auto end_5 = high_resolution_clock::now();
 
