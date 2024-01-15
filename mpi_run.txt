@@ -1,0 +1,5 @@
+# mpirun: mpi
+# 	mpirun -np 4 --hostfile hosts mpi -f inputs/map_1.txt -n 4 -r 0 -d 5
+
+# mpi: mpi.cpp
+# 	mpicxx mpi.cpp -o mpi
