@@ -27,8 +27,7 @@ typedef struct findnearthread
     node_t *list_of_nodes;
     int points_per_thread;
     int offset;
-    int *min_d2_array;
-    int *min_d2_index_array;
+
 }threadstrcut0;
 
 typedef struct mincostthread
@@ -38,8 +37,7 @@ typedef struct mincostthread
     rect_t *obstacles;
     int points_per_thread;
     int offset;
-    int *min_d2_array;
-    int *min_d2_index_array;
+
 
 }threadstrcut1;
 
@@ -50,7 +48,7 @@ typedef struct changecostthread
     rect_t *obstacles;
     int points_per_thread;
     int offset;
-    int best_index;
+
 
 }threadstrcut2;
 

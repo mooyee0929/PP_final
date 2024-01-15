@@ -20,8 +20,10 @@ int max_num_of_nodes, num_of_obstacles;
 int map_dim_x, map_dim_y;
 int dist_to_grow;
 int num_of_threads,nthreads;
+int min_d2,min_d2_idx=-1;
 
 node_t final_winning_node;
+pthread_mutex_t mutex;
 
 std::map<int, std::string> step = {
     {0, "generate random point"},
@@ -157,18 +159,18 @@ inline bool doesOverlapCollide(rect_t *obstacles, int num_of_obstacles, node_t n
 void *findnearthread(void *arg){
     threadstrcut0 *args = (threadstrcut0 *)arg;
     point_t coordinate = args->coordinate;
-    node_t *list_of_nodes = args->list_of_nodes;
+    
     int points_per_thread = args->points_per_thread;
     int offset = args->offset;
-    int *min_d2_array = args->min_d2_array;
-    int *min_d2_index_array = args->min_d2_index_array;
-    for(int i = offset*points_per_thread;i<(offset+1)*points_per_thread;i++){
+    node_t *list_of_nodes = args->list_of_nodes + offset*points_per_thread;
+    for(int i = 0;i<points_per_thread;i++){
         int d2 = squaredDistance(coordinate, list_of_nodes[i].point);
-        int tid = offset;
-        // printf("Thread %d: d2 = %d\n", tid, d2);
-        if(d2 < min_d2_array[tid]){
-            min_d2_array[tid] = d2;
-            min_d2_index_array[tid] = i;
+
+        if(d2 < min_d2){
+            pthread_mutex_lock(&mutex);
+            min_d2 = d2;
+            min_d2_idx = i + offset*points_per_thread;
+            pthread_mutex_unlock(&mutex);
         }
     }
     
@@ -179,20 +181,12 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
     // Find the nearest node to the coordinate.
     // returns true if found, 
     // returns false if nearest node is closer than dist_to_grow     
-    int min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greater than any distance
+    min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greater than any distance
     
     if (num_of_nodes<num_of_threads){
         nthreads = num_of_nodes;
     }else{
         nthreads = num_of_threads;
-    }
-
-    int min_d2_array[nthreads];
-    int min_d2_index_array[nthreads];
-
-    for(int i = 0; i < nthreads; i++){
-        min_d2_array[i] = min_d2;
-        min_d2_index_array[i] = -1;
     }
 
     int points_per_thread = num_of_nodes/nthreads;
@@ -201,9 +195,11 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
         args[i].list_of_nodes = list_of_nodes;
         args[i].points_per_thread = points_per_thread;
         args[i].offset = i;
-        args[i].min_d2_array = min_d2_array;
-        args[i].min_d2_index_array = min_d2_index_array;
+
     }
+
+    pthread_mutex_init(&mutex, 0);
+
     for(int i = 0; i < nthreads; i++) {
         pthread_create(&threads[i], NULL, findnearthread, &args[i]);
     }
@@ -215,15 +211,15 @@ bool findNearestNodeToCoordinate(point_t coordinate, node_t *list_of_nodes, int 
 
     int min_index; 
     // int min_i;
-    for(int i = 0; i < nthreads; i++){
-        if(min_d2_array[i] < min_d2){
-            min_d2 = min_d2_array[i];
-            min_index = min_d2_index_array[i];
-            // min_i = i;
-        }
-        // printf("min cost %d, min thread %d,min index %d, now %d, now cost %d\n",min_d2,min_i,min_index, i,min_d2_array[i]);
-    }
-
+    // for(int i = 0; i < nthreads; i++){
+    //     if(min_d2_array[i] < min_d2){
+    //         min_d2 = min_d2_array[i];
+    //         min_index = min_d2_index_array[i];
+    //         // min_i = i;
+    //     }
+    //     // printf("min cost %d, min thread %d,min index %d, now %d, now cost %d\n",min_d2,min_i,min_index, i,min_d2_array[i]);
+    // }
+    min_index = min_d2_idx;
     // printf("min_index: %d\n", min_index);
     // printf("min_index2 : %d\n", min_i);
 
@@ -244,10 +240,7 @@ void *find_min_cost(void * arg){
     rect_t *obstacles = args->obstacles;
     int points_per_thread = args->points_per_thread;
     int offset = args->offset;
-    int *min_d2_index_array = args->min_d2_index_array;
-    int *min_d2_array = args->min_d2_array;
     int threshold_d2 = dist_to_grow * 2; // just a heuristic, TODO: refine later 
-    uint32_t min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greaterthreshold_d2 than any distance
     
 
     for(int i = offset*points_per_thread;i<(offset+1)*points_per_thread;i++) {
@@ -264,8 +257,10 @@ void *find_min_cost(void * arg){
             uint32_t cost_with_candidate = candidate_node.cost + d2;
             // valid node, see if the cost is lower
             if (cost_with_candidate < node_to_refine->cost && cost_with_candidate < min_d2) {
-                min_d2_index_array[offset] = i;
-                min_d2_array[offset] = cost_with_candidate;
+                pthread_mutex_lock(&mutex);
+                min_d2_idx = i;
+                min_d2 = cost_with_candidate;
+                pthread_mutex_unlock(&mutex);
             }
         }
     }
@@ -279,7 +274,6 @@ void *change_cost(void * arg){
     rect_t *obstacles = args->obstacles;
     int points_per_thread = args->points_per_thread;
     int offset = args->offset;
-    int best_index = args->best_index;
     int threshold_d2 = dist_to_grow * 2; // just a heuristic, TODO: refine later 
     
     
@@ -296,7 +290,7 @@ void *change_cost(void * arg){
             uint32_t cost_with_optimized_node = d2 + node_to_refine->cost;
             // valid node, see if the cost is lower
             if (cost_with_optimized_node < candidate_node->cost) {
-                candidate_node->parent = list_of_nodes + best_index;
+                candidate_node->parent = list_of_nodes + min_d2_idx;
                 candidate_node->cost = cost_with_optimized_node;
             }
         }
@@ -307,7 +301,7 @@ void *change_cost(void * arg){
 inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_of_nodes_to_search, rect_t *obstacles, int num_of_obstacles, pthread_t *threads, threadstrcut1 *args, threadstrcut2 *argg){
 
 
-    uint32_t min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greaterthreshold_d2 than any distance
+    min_d2 = pow(map_dim_x + map_dim_y, 2); // Guaranteed to be greaterthreshold_d2 than any distance
 
     if (num_of_nodes_to_search<num_of_threads){
         nthreads = num_of_nodes_to_search;
@@ -315,23 +309,14 @@ inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_
         nthreads = num_of_threads;
     }
     int points_per_thread = num_of_nodes_to_search/nthreads;
-    int best_index = -1;
-    int min_d2_array[nthreads];
-    int min_d2_index_array[nthreads];
+    min_d2_idx = -1;
 
-    for(int i = 0; i < nthreads; i++){
-        min_d2_array[i] = min_d2;
-        min_d2_index_array[i] = -1;
-
-    }
     for(int i = 0; i < nthreads; i++) {
         args[i].node_to_refine = node_to_refine;
         args[i].list_of_nodes = list_of_nodes;
         args[i].obstacles = obstacles;
         args[i].points_per_thread = points_per_thread;
         args[i].offset = i;
-        args[i].min_d2_array = min_d2_array;
-        args[i].min_d2_index_array = min_d2_index_array;
     }
 
     for(int i = 0; i < nthreads; i++) {
@@ -343,17 +328,10 @@ inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_
         pthread_join(threads[i], &status);
     }
 
-    for(int i = 0; i < nthreads; i++) {
-        if(min_d2_array[i] < min_d2){
-            min_d2 = min_d2_array[i];
-            best_index = min_d2_index_array[i];
-        }
-    }
-
     
 
 
-    if(best_index != -1) {
+    if(min_d2_idx != -1) {
 
         for(int i = 0; i < nthreads; i++) {
         argg[i].node_to_refine = node_to_refine;
@@ -361,7 +339,6 @@ inline void run_rrt_star(node_t *node_to_refine, node_t *list_of_nodes, int num_
         argg[i].obstacles = obstacles;
         argg[i].points_per_thread = points_per_thread;
         argg[i].offset = i;
-        argg[i].best_index = best_index;
         }
 
         for(int i = 0; i < nthreads; i++) {
@@ -565,7 +542,7 @@ int main(int argc, const char *argv[]) {
 
         // check if the new node is the goal
         if(closerThanDistSquared(candidate_node.point, goal, pow(dist_to_grow, 2))){
-            printf("Found goal \n");
+            // printf("Found goal \n");
             if (num_of_winning_nodes == 0) {
                 best_cost = candidate_node.cost;
                 final_winning_node = candidate_node;
